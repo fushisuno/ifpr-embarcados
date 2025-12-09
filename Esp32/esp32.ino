@@ -7,6 +7,9 @@
 #include <time.h> 
 #include <WiFiClientSecure.h>
 
+const int LED_VERDE = 2;
+const int LED_VERMELHO = 4;
+
 const byte ROWS = 4; 
 const byte COLS = 4;
 char hexaKeys[ROWS][COLS] = {
@@ -22,7 +25,7 @@ Keypad customKeypad = Keypad(makeKeymap(hexaKeys), rowPins, colPins, ROWS, COLS)
 const char* ssid = "Wokwi-GUEST";
 const char* password = "";
 
-const char* serverUrl = "https://verbose-adventure-j4vwgvv99j93p4r9-3000.app.github.dev/users";
+const char* serverUrl = "https://cuddly-space-winner-455jx9wq9w525xwg-3000.app.github.dev/users";
 // Chave HMAC
 const String SECRET_KEY = "0ORt3xlDbSOpiYOwUFw76IQglvHZeyGqaH4Ji3xvDVqUauC7eVTMullFVpixe6CV"; 
 
@@ -218,6 +221,9 @@ void setup(){
     } else {
         Serial.println("Aviso: Falha ao baixar lista inicial. Usando lista antiga/vazia.");
     }
+
+    pinMode(LED_VERDE, OUTPUT);
+    pinMode(LED_VERMELHO, OUTPUT);
     
     Serial.println("--------------------------------");
     Serial.println("Aguardando entrada (ID + SENHA + 'A'):");
@@ -244,12 +250,16 @@ void loop(){
                     Serial.println("******************");
                     Serial.println("** ACESSO PERMITIDO! **");
                     Serial.println("******************");
-                    // FAZER LOGICA PRA ACENDER O LED VERDE AQUI
+                    digitalWrite(LED_VERDE, HIGH);
+                    digitalWrite(LED_VERMELHO, LOW);
+                    delay(1000);
                 } else {
                     Serial.println("-----------------");
                     Serial.println("-- ACESSO NEGADO --");
                     Serial.println("-----------------");
-                    // FAZER LOGICA PRA ACENDER O LED VERMELHO AQUI
+                    digitalWrite(LED_VERDE, LOW);
+                    digitalWrite(LED_VERMELHO, HIGH);
+                    delay(1000);
                 }
 
             } else {
