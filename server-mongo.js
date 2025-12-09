@@ -27,7 +27,7 @@ const swaggerOptions = {
 };
 
 const swaggerDocs = swaggerJsdoc(swaggerOptions);
-app.use('/', swaggerUi.serve, swaggerUi.setup(swaggerDocs));
+app.use('/docs', swaggerUi.serve, swaggerUi.setup(swaggerDocs));
 
 app.use(express.json());
 
@@ -224,6 +224,30 @@ app.post('/logs', async (req, res) => {
     res.status(500).json({ error: 'Erro ao salvar logs' });
   }
 });
+
+/**
+ * @swagger
+ * /logs:
+ *   get:
+ *     summary: Listar logs
+ *     description: Retorna todos os logs armazenados no banco
+ *     tags: [Logs]
+ *     responses:
+ *       200:
+ *         description: Lista de logs
+ *       500:
+ *         description: Erro interno ao buscar logs
+ */
+app.get("/logs", checkAdmin, async (req, res) => {
+  try {
+    const logs = await logsCollection.find({}).sort({ timestamp: -1 }).toArray();
+    res.json(logs);
+  } catch (e) {
+    console.error("Erro ao buscar logs:", e);
+    res.status(500).json({ error: "Erro interno ao buscar logs" });
+  }
+});
+
 
 app.listen(3000, () => {
   console.log('Server running with MongoDB on port 3000');
