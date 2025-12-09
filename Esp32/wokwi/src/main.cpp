@@ -29,7 +29,7 @@ const char* serverUrl = "https://cuddly-space-winner-455jx9wq9w525xwg-3000.app.g
 const char* logsUrl = "https://cuddly-space-winner-455jx9wq9w525xwg-3000.app.github.dev/logs";
 
 // Chave HMAC
-const String SECRET_KEY = "0ORt3xlDbSOpiYOwUFw76IQglvHZeyGqaH4Ji3xvDVqUauC7eVTMullFVpixe6CV"; 
+const String SECRET_KEY = "UGEhmxE6iGoS65K7mvpelpJXx1xx6EKOsUkaqfLeTUoIpMuODGaB4yOaqMW31OhE"; 
 
 const char* ntpServer = "pool.ntp.org";
 const long  gmtOffset_sec = -3 * 3600;
