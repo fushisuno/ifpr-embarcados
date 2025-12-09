@@ -4,70 +4,104 @@
 #include <ArduinoJson.h>
 #include <mbedtls/md.h>
 #include <mbedtls/sha256.h>
+#include <time.h> 
+#include <WiFiClientSecure.h>
 
 const byte ROWS = 4; 
 const byte COLS = 4;
 char hexaKeys[ROWS][COLS] = {
-  {'1', '2', '3', 'A'},
-  {'4', '5', '6', 'B'},
-  {'7', '8', '9', 'C'},
-  {'*', '0', '#', 'D'}
+    {'1', '2', '3', 'A'},
+    {'4', '5', '6', 'B'},
+    {'7', '8', '9', 'C'},
+    {'*', '0', '#', 'D'}
 };
-
 byte rowPins[ROWS] = {13, 12, 14, 27}; 
 byte colPins[COLS] = {26, 25, 33, 32};
-
 Keypad customKeypad = Keypad(makeKeymap(hexaKeys), rowPins, colPins, ROWS, COLS); 
 
-String inputBuffer = "";
 const char* ssid = "Wokwi-GUEST";
 const char* password = "";
-const char* serverUrl = "https://cuddly-space-winner-455jx9wq9w525xwg-3000.app.github.dev/users";
-const String SECRET_KEY = "0ORt3xlDbSOpiYOwUFw76IQglvHZeyGqaH4Ji3xvDVqUauC7eVTMullFVpixe6CV";
+
+const char* serverUrl = "https://verbose-adventure-j4vwgvv99j93p4r9-3000.app.github.dev/users";
+// Chave HMAC
+const String SECRET_KEY = "0ORt3xlDbSOpiYOwUFw76IQglvHZeyGqaH4Ji3xvDVqUauC7eVTMullFVpixe6CV"; 
+
+const char* ntpServer = "pool.ntp.org";
+const long  gmtOffset_sec = -3 * 3600;
+const int   daylightOffset_sec = 0;
 
 struct User {
-  String user_code;
-  String senha_hash;
-  String hora_inicio;
-  String hora_fim;
+    String user_code;
+    String senha_hash;
+    String hora_inicio;
+    String hora_fim;
 };
 
 #define MAX_USERS 50
 User Users[MAX_USERS];
 int userCount = 0;
+String inputBuffer = "";
 
-String applyHMAC(const String& message, const String& key) {
-  unsigned char hmacResult[32];
-  mbedtls_md_context_t ctx;
-  mbedtls_md_init(&ctx);
-  mbedtls_md_setup(&ctx, mbedtls_md_info_from_type(MBEDTLS_MD_SHA256), 1);
-  mbedtls_md_hmac_starts(&ctx, (const unsigned char*)key.c_str(), key.length());
-  mbedtls_md_hmac_update(&ctx, (const unsigned char*)message.c_str(), message.length());
-  mbedtls_md_hmac_finish(&ctx, hmacResult);
-  mbedtls_md_free(&ctx);
+unsigned long lastDownloadTime = 0;
+const long downloadInterval = 60 * 60 * 1000;
 
-  String hmacString;
-  for (int i = 0; i < 32; i++) {
-    char str[3];
-    sprintf(str, "%02x", (int)hmacResult[i]);
-    hmacString += str;
-  }
-  return hmacString;
+String applySHA256(const String& message) {
+    char outputBuffer[65];
+    mbedtls_sha256_context ctx;
+    mbedtls_sha256_init(&ctx);
+    mbedtls_sha256_starts(&ctx, 0); 
+    mbedtls_sha256_update(&ctx, (const unsigned char*)message.c_str(), message.length());
+    
+    unsigned char hash[32];
+    mbedtls_sha256_finish(&ctx, hash);
+    mbedtls_sha256_free(&ctx);
+
+    for(int i = 0; i < 32; i++){
+        sprintf(outputBuffer + (i * 2), "%02x", hash[i]);
+    }
+    return String(outputBuffer);
 }
 
-void downloadUserList(){
+String applyHMAC(const String& message, const String& key) {
+    unsigned char hmacResult[32];
+    mbedtls_md_context_t ctx;
+    mbedtls_md_init(&ctx);
+    mbedtls_md_setup(&ctx, mbedtls_md_info_from_type(MBEDTLS_MD_SHA256), 1);
+    mbedtls_md_hmac_starts(&ctx, (const unsigned char*)key.c_str(), key.length());
+    mbedtls_md_hmac_update(&ctx, (const unsigned char*)message.c_str(), message.length());
+    mbedtls_md_hmac_finish(&ctx, hmacResult);
+    mbedtls_md_free(&ctx);
+
+    String hmacString;
+    for (int i = 0; i < 32; i++) {
+        char str[3];
+        sprintf(str, "%02x", (int)hmacResult[i]);
+        hmacString += str;
+    }
+    return hmacString;
+}
+
+void setupNTP() {
+    configTime(gmtOffset_sec, daylightOffset_sec, ntpServer);
+    Serial.println("NTP configurado.");
+}
+
+bool downloadUserList() {
     if (WiFi.status() != WL_CONNECTED) {
-        Serial.println("Wi-Fi não conectado!");
+        Serial.println("Wi-Fi não conectado. Falha ao baixar lista.");
         return false;
     }
 
+    WiFiClientSecure client;
+    client.setInsecure(); 
+    
     HTTPClient http;
-    http.begin(serverUrl);
+    http.begin(client, serverUrl); 
+
     int httpCode = http.GET();
 
     if (httpCode != 200) {
-        Serial.print("Erro HTTP: ");
-        Serial.println(httpCode);
+        Serial.printf("Erro HTTP ao baixar lista: %d\n", httpCode);
         http.end();
         return false;
     }
@@ -77,88 +111,158 @@ void downloadUserList(){
 
     DynamicJsonDocument doc(8192);
     DeserializationError error = deserializeJson(doc, payload);
+    
     if (error) {
-        Serial.print("Erro ao parsear JSON: ");
-        Serial.println(error.c_str());
+        Serial.printf("Erro ao parsear JSON da lista: %s\n", error.c_str());
         return false;
     }
 
     String hmacReceived = doc["hmac"];
-    doc.remove("hmac");
+    JsonArray arr = doc["list"].as<JsonArray>();
 
-    String jsonWithoutHMAC;
-    serializeJson(doc, jsonWithoutHMAC);
+    String jsonArrayString;
+    serializeJson(arr, jsonArrayString);
 
-    String hmacCalc = applyHMAC(jsonWithoutHMAC, SECRET_KEY);
+    String hmacCalc = applyHMAC(jsonArrayString, SECRET_KEY);
 
     if (!hmacCalc.equalsIgnoreCase(hmacReceived)) {
-        Serial.println("HMAC inválido! Lista descartada.");
+        Serial.println("HMAC inválido! Lista descartada por segurança.");
         return false;
     }
 
-    JsonArray arr = doc["users"].as<JsonArray>();
     userCount = 0;
     for (JsonObject userObj : arr) {
         if (userCount >= MAX_USERS) break;
         Users[userCount].user_code = String(userObj["user_code"].as<const char*>());
-        Users[userCount].senha_hash = String(userObj["senha"].as<const char*>());
+        Users[userCount].senha_hash = String(userObj["senha_hash"].as<const char*>()); 
         Users[userCount].hora_inicio = String(userObj["hora_inicio"].as<const char*>());
         Users[userCount].hora_fim = String(userObj["hora_fim"].as<const char*>());
         userCount++;
     }
 
-    Serial.print("Lista de usuários baixada. Total: ");
-    Serial.println(userCount);
+    Serial.printf("Lista de usuários baixada e verificada com sucesso. Total: %d\n", userCount);
+    lastDownloadTime = millis();
     return true;
 }
 
 bool validateUser(const String& id, const String& senha) {
-  for (int i = 0; i < userCount; i++) {
-    if (Users[i].user_code == id && Users[i].senha == senha) {
-      return true;
+    String input_hash = applySHA256(senha); 
+    String access_reason = "Credenciais inválidas."; 
+
+    for (int i = 0; i < userCount; i++) {
+        if (Users[i].user_code == id) {
+
+            if (Users[i].senha_hash == input_hash) {
+
+                time_t now;
+                struct tm timeinfo;
+
+                if (!getLocalTime(&timeinfo)) {
+                    Serial.println("Falha ao obter o tempo NTP. Permissão ignorada.");
+                    return true; 
+                }
+
+                char currentTimeStr[6];
+                strftime(currentTimeStr, 6, "%H:%M", &timeinfo);
+                String current = String(currentTimeStr);
+
+                String start = Users[i].hora_inicio;
+                String end   = Users[i].hora_fim;
+
+                bool permitted;
+
+                if (start <= end) {
+                    permitted = (current >= start && current <= end);
+                } else {
+                    permitted = (current >= start || current <= end);
+                }
+
+                if (permitted) {
+                    return true;
+                } else {
+                    access_reason = "Fora do horário permitido. Horário permitido: " 
+                                    + start + " até " + end;
+                }
+
+            } else {
+                access_reason = "Senha incorreta.";
+            }
+
+            Serial.printf("Acesso negado para ID %s. Motivo: %s\n",
+                          id.c_str(), access_reason.c_str());
+
+            return false;
+        }
     }
-  }
-  return false;
+
+    Serial.printf("Acesso negado. ID %s não encontrado.\n", id.c_str());
+    return false;
 }
 
 void setup(){
-  Serial.begin(9600);
-  WiFi.begin(ssid, password);
-  Serial.print("Conectando ao Wi-Fi");
-  while (WiFi.status() != WL_CONNECTED) {
-    delay(500);
-    Serial.print(".");
-  }
-  Serial.println("\nConectado!");
+    Serial.begin(9600);
+    
+    // Conexão Wi-Fi
+    WiFi.begin(ssid, password);
+    Serial.print("Conectando ao Wi-Fi");
+    while (WiFi.status() != WL_CONNECTED) {
+        delay(500);
+        Serial.print(".");
+    }
+    Serial.println("\nConectado!");
 
-  if (downloadUserList()) {
-    Serial.println("Lista de usuários válida!");
-  }
-  Serial.println("Digite o ID + Senha:");
+    setupNTP(); 
+
+    if (downloadUserList()) {
+        Serial.println("Sistema pronto!");
+    } else {
+        Serial.println("Aviso: Falha ao baixar lista inicial. Usando lista antiga/vazia.");
+    }
+    
+    Serial.println("--------------------------------");
+    Serial.println("Aguardando entrada (ID + SENHA + 'A'):");
 }
 
 void loop(){
- char customKey = customKeypad.getKey();
-
-  if (customKey) {
-    if (customKey == 'A') {
-      if (inputBuffer.length() == 12) {
-        String userID = inputBuffer.substring(0, 8);
-        String senha = inputBuffer.substring(8, 12);
-
-        if (validateUser(userID, senha)) {
-          Serial.println("Acesso permitido!");
-        } else {
-          Serial.println("Acesso negado!");
-        }
-
-      } else {
-        Serial.println("Entrada inválida!");
-      }
-      inputBuffer = "";
-    } else {
-      inputBuffer += customKey;
-      Serial.print(customKey);
+    if (millis() - lastDownloadTime >= downloadInterval) {
+        Serial.println("--- Tentando atualizar lista de usuários ---");
+        downloadUserList();
     }
-  }
+
+    char customKey = customKeypad.getKey();
+
+    if (customKey) {
+        if (customKey == 'A') {
+            if (inputBuffer.length() >= 8 && inputBuffer.length() <= 12) { 
+                int idLength = 8;
+                String userID = inputBuffer.substring(0, idLength);
+                String senha = inputBuffer.substring(idLength);
+
+                Serial.printf("\nTentativa de acesso: ID=%s, Senha Dig.: *****\n", userID.c_str());
+
+                if (validateUser(userID, senha)) {
+                    Serial.println("******************");
+                    Serial.println("** ACESSO PERMITIDO! **");
+                    Serial.println("******************");
+                    // FAZER LOGICA PRA ACENDER O LED VERDE AQUI
+                } else {
+                    Serial.println("-----------------");
+                    Serial.println("-- ACESSO NEGADO --");
+                    Serial.println("-----------------");
+                    // FAZER LOGICA PRA ACENDER O LED VERMELHO AQUI
+                }
+
+            } else {
+                Serial.println("\nEntrada inválida! Formato esperado: ID(8) + Senha(4).");
+            }
+            inputBuffer = "";
+            Serial.println("Aguardando nova entrada:");
+        } else if (customKey == '#') {
+            inputBuffer = "";
+            Serial.println("\nBuffer limpo. Digite novamente.");
+        } else {
+            inputBuffer += customKey;
+            Serial.print(customKey);
+        }
+    }
 }
